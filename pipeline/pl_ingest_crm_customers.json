@@ -1,0 +1,111 @@
+{
+  "name": "pl_ingest_crm_customers",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Extract customer/contact records from Salesforce CRM and stage them to ADLS Gen2 as JSON. Supports incremental extraction via LastModifiedDate watermark stored in a pipeline parameter.",
+    "activities": [
+      {
+        "name": "GetLastWatermark",
+        "description": "Read the last-successful-run watermark from Snowflake control table",
+        "type": "Lookup",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:02:00", "retry": 2, "retryIntervalInSeconds": 30 },
+        "typeProperties": {
+          "source": {
+            "type": "SnowflakeSource",
+            "query": "SELECT COALESCE(MAX(LAST_RUN_TS), '1900-01-01') AS WATERMARK FROM RETAIL_DW.RAW.PIPELINE_WATERMARKS WHERE PIPELINE_NAME = 'pl_ingest_crm_customers'"
+          },
+          "dataset": { "referenceName": "ds_snowflake_raw_customers", "type": "DatasetReference" },
+          "firstRowOnly": true
+        }
+      },
+      {
+        "name": "CopySalesforceToADLS",
+        "description": "Incremental copy of Salesforce Contacts modified since last watermark to ADLS JSON staging",
+        "type": "Copy",
+        "dependsOn": [
+          { "activity": "GetLastWatermark", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.01:00:00", "retry": 3, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "source": {
+            "type": "SalesforceSource",
+            "query": {
+              "value": "SELECT Id, FirstName, LastName, Email, Phone, Birthdate, CreatedDate, LastModifiedDate, Customer_Tier__c, IsDeleted FROM Contact WHERE LastModifiedDate > @{activity('GetLastWatermark').output.firstRow.WATERMARK}",
+              "type": "Expression"
+            },
+            "readBehavior": "query"
+          },
+          "sink": {
+            "type": "JsonSink",
+            "storeSettings": { "type": "AzureBlobFSWriteSettings" },
+            "formatSettings": { "type": "JsonWriteSettings", "filePattern": "arrayOfObjects" }
+          },
+          "enableStaging": false,
+          "translator": {
+            "type": "TabularTranslator",
+            "mappings": [
+              { "source": { "name": "Id" },                "sink": { "name": "customer_id" } },
+              { "source": { "name": "FirstName" },         "sink": { "name": "first_name" } },
+              { "source": { "name": "LastName" },          "sink": { "name": "last_name" } },
+              { "source": { "name": "Email" },             "sink": { "name": "email" } },
+              { "source": { "name": "Phone" },             "sink": { "name": "phone" } },
+              { "source": { "name": "Birthdate" },         "sink": { "name": "date_of_birth" } },
+              { "source": { "name": "CreatedDate" },       "sink": { "name": "registration_date" } },
+              { "source": { "name": "LastModifiedDate" },  "sink": { "name": "last_modified" } },
+              { "source": { "name": "Customer_Tier__c" },  "sink": { "name": "tier" } },
+              { "source": { "name": "IsDeleted" },         "sink": { "name": "is_deleted" } }
+            ]
+          }
+        },
+        "inputs": [
+          { "referenceName": "ds_salesforce_contacts", "type": "DatasetReference" }
+        ],
+        "outputs": [
+          { "referenceName": "ds_adls_raw_customers", "type": "DatasetReference" }
+        ]
+      },
+      {
+        "name": "UpdateWatermark",
+        "description": "Update pipeline watermark with current run timestamp on success",
+        "type": "Script",
+        "dependsOn": [
+          { "activity": "CopySalesforceToADLS", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.00:02:00", "retry": 1, "retryIntervalInSeconds": 15 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            {
+              "type": "NonQuery",
+              "text": "MERGE INTO RETAIL_DW.RAW.PIPELINE_WATERMARKS t USING (SELECT 'pl_ingest_crm_customers' AS PIPELINE_NAME, CURRENT_TIMESTAMP() AS LAST_RUN_TS) s ON t.PIPELINE_NAME = s.PIPELINE_NAME WHEN MATCHED THEN UPDATE SET t.LAST_RUN_TS = s.LAST_RUN_TS WHEN NOT MATCHED THEN INSERT VALUES (s.PIPELINE_NAME, s.LAST_RUN_TS)"
+            }
+          ]
+        }
+      },
+      {
+        "name": "LogRowCount",
+        "description": "Log rows copied to Application Insights via pipeline metadata",
+        "type": "SetVariable",
+        "dependsOn": [
+          { "activity": "CopySalesforceToADLS", "dependencyConditions": ["Succeeded"] }
+        ],
+        "typeProperties": {
+          "variableName": "rowsCopied",
+          "value": {
+            "value": "@string(activity('CopySalesforceToADLS').output.rowsCopied)",
+            "type": "Expression"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "forceFullLoad": { "type": "Bool", "defaultValue": false }
+    },
+    "variables": {
+      "rowsCopied": { "type": "String", "defaultValue": "0" }
+    },
+    "annotations": ["crm", "customers", "salesforce", "incremental"],
+    "concurrency": 1
+  }
+}

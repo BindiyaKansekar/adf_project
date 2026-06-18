@@ -1,0 +1,24 @@
+{
+  "name": "ls_salesforce",
+  "type": "Microsoft.DataFactory/factories/linkedservices",
+  "properties": {
+    "description": "Salesforce CRM — source for customer and account data",
+    "type": "Salesforce",
+    "typeProperties": {
+      "environmentUrl": "https://mycompany.my.salesforce.com",
+      "username": "adf-integration@company.com",
+      "password": {
+        "type": "AzureKeyVaultSecret",
+        "store": { "referenceName": "ls_key_vault", "type": "LinkedServiceReference" },
+        "secretName": "salesforce-password"
+      },
+      "securityToken": {
+        "type": "AzureKeyVaultSecret",
+        "store": { "referenceName": "ls_key_vault", "type": "LinkedServiceReference" },
+        "secretName": "salesforce-security-token"
+      },
+      "apiVersion": "53.0"
+    },
+    "annotations": ["crm", "salesforce"]
+  }
+}

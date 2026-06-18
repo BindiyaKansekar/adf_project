@@ -1,0 +1,122 @@
+{
+  "name": "pl_archive_processed_files",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "After successful Snowflake load and DQ validation, moves processed staging files from raw-stage to the archive container with date-partitioned path. Deletes source after successful copy.",
+    "activities": [
+      {
+        "name": "CopyToArchive",
+        "description": "Copy processed file from staging to archive with date-partitioned folder",
+        "type": "Copy",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:30:00", "retry": 3, "retryIntervalInSeconds": 30 },
+        "typeProperties": {
+          "source": {
+            "type": "BinarySource",
+            "storeSettings": {
+              "type": "AzureBlobFSReadSettings",
+              "recursive": false,
+              "deleteFilesAfterCompletion": false
+            }
+          },
+          "sink": {
+            "type": "BinarySink",
+            "storeSettings": {
+              "type": "AzureBlobFSWriteSettings"
+            }
+          },
+          "enableStaging": false,
+          "preserve": ["Attributes"]
+        },
+        "inputs": [
+          {
+            "referenceName": "ds_adls_raw_customers",
+            "type": "DatasetReference",
+            "parameters": {
+              "folderPath": {
+                "value": "@pipeline().parameters.sourceFolderPath",
+                "type": "Expression"
+              }
+            }
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "ds_adls_raw_customers",
+            "type": "DatasetReference",
+            "parameters": {
+              "folderPath": {
+                "value": "@concat('retail-archive/', pipeline().parameters.entityName, '/', formatDateTime(utcnow(), 'yyyy/MM/dd'))",
+                "type": "Expression"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "DeleteSourceFile",
+        "description": "Delete original staging file after confirmed archive copy",
+        "type": "Delete",
+        "dependsOn": [
+          { "activity": "CopyToArchive", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.00:05:00", "retry": 2 },
+        "typeProperties": {
+          "dataset": {
+            "referenceName": "ds_adls_raw_customers",
+            "type": "DatasetReference",
+            "parameters": {
+              "folderPath": {
+                "value": "@pipeline().parameters.sourceFolderPath",
+                "type": "Expression"
+              }
+            }
+          },
+          "enableLogging": true,
+          "logStorageSettings": {
+            "linkedServiceName": { "referenceName": "ls_adls_gen2", "type": "LinkedServiceReference" },
+            "path": "adf-delete-logs"
+          },
+          "recursive": false,
+          "storeSettings": {
+            "type": "AzureBlobFSReadSettings",
+            "recursive": false,
+            "wildcardFileName": {
+              "value": "@pipeline().parameters.fileName",
+              "type": "Expression"
+            }
+          }
+        }
+      },
+      {
+        "name": "UpdateArchiveLog",
+        "description": "Record archive operation in Snowflake for audit trail",
+        "type": "Script",
+        "dependsOn": [
+          { "activity": "DeleteSourceFile", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.00:02:00", "retry": 1 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            {
+              "type": "NonQuery",
+              "text": {
+                "value": "@concat('UPDATE RETAIL_DW.RAW.LOAD_LOG SET ARCHIVED = TRUE, ARCHIVE_TS = CURRENT_TIMESTAMP() WHERE BATCH_ID = ''', pipeline().parameters.batchId, '''')",
+                "type": "Expression"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "parameters": {
+      "sourceFolderPath": { "type": "String" },
+      "fileName":         { "type": "String" },
+      "entityName":       { "type": "String" },
+      "batchId":          { "type": "String" }
+    },
+    "annotations": ["archive", "cleanup", "housekeeping"],
+    "concurrency": 10
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "name": "pl_load_silver_layer",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Triggers Silver layer transformation stored procedures in Snowflake. Runs each entity's MERGE-based SCD2 upsert in dependency order. Called after all RAW tables for a given batch are loaded and validated.",
+    "activities": [
+      {
+        "name": "TransformCustomers",
+        "description": "Run silver_customers MERGE — SCD2 upsert with EFFECTIVE_FROM/TO/IS_CURRENT",
+        "type": "Script",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:30:00", "retry": 2, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            { "type": "NonQuery", "text": "CALL RETAIL_DW.SILVER.SP_TRANSFORM_CUSTOMERS()" }
+          ]
+        }
+      },
+      {
+        "name": "TransformProducts",
+        "description": "Run silver_products MERGE — joins raw products with categories and suppliers",
+        "type": "Script",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:30:00", "retry": 2, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            { "type": "NonQuery", "text": "CALL RETAIL_DW.SILVER.SP_TRANSFORM_PRODUCTS()" }
+          ]
+        }
+      },
+      {
+        "name": "TransformOrders",
+        "description": "Run silver_orders MERGE — validates, types, and deduplicates raw orders",
+        "type": "Script",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:45:00", "retry": 2, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            { "type": "NonQuery", "text": "CALL RETAIL_DW.SILVER.SP_TRANSFORM_ORDERS()" }
+          ]
+        }
+      },
+      {
+        "name": "TransformOrderItems",
+        "description": "Run silver_order_items — depends on orders being complete first",
+        "type": "Script",
+        "dependsOn": [
+          { "activity": "TransformOrders", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.00:45:00", "retry": 2, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            { "type": "NonQuery", "text": "CALL RETAIL_DW.SILVER.SP_TRANSFORM_ORDER_ITEMS()" }
+          ]
+        }
+      },
+      {
+        "name": "TransformInventory",
+        "description": "Run silver_inventory snapshots — latest-state-per-product materialisation",
+        "type": "Script",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:20:00", "retry": 2, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            { "type": "NonQuery", "text": "CALL RETAIL_DW.SILVER.SP_TRANSFORM_INVENTORY()" }
+          ]
+        }
+      },
+      {
+        "name": "TransformPayments",
+        "description": "Run silver_payments — validates amounts, maps statuses",
+        "type": "Script",
+        "dependsOn": [
+          { "activity": "TransformOrders", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.00:20:00", "retry": 2, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            { "type": "NonQuery", "text": "CALL RETAIL_DW.SILVER.SP_TRANSFORM_PAYMENTS()" }
+          ]
+        }
+      },
+      {
+        "name": "TransformCampaigns",
+        "description": "Run silver_campaigns — normalise Marketo campaign data",
+        "type": "Script",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:20:00", "retry": 2, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            { "type": "NonQuery", "text": "CALL RETAIL_DW.SILVER.SP_TRANSFORM_CAMPAIGNS()" }
+          ]
+        }
+      },
+      {
+        "name": "TransformCustomerSegments",
+        "description": "Recompute RFM segments — depends on orders and customers being loaded",
+        "type": "Script",
+        "dependsOn": [
+          { "activity": "TransformCustomers",  "dependencyConditions": ["Succeeded"] },
+          { "activity": "TransformOrderItems", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.00:30:00", "retry": 2, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            { "type": "NonQuery", "text": "CALL RETAIL_DW.SILVER.SP_TRANSFORM_CUSTOMER_SEGMENTS()" }
+          ]
+        }
+      },
+      {
+        "name": "SilverLayerComplete",
+        "description": "Barrier activity — signals all Silver transforms finished; orchestrator waits on this",
+        "type": "Wait",
+        "dependsOn": [
+          { "activity": "TransformCustomerSegments", "dependencyConditions": ["Succeeded"] },
+          { "activity": "TransformInventory",        "dependencyConditions": ["Succeeded"] },
+          { "activity": "TransformPayments",         "dependencyConditions": ["Succeeded"] },
+          { "activity": "TransformCampaigns",        "dependencyConditions": ["Succeeded"] },
+          { "activity": "TransformProducts",         "dependencyConditions": ["Succeeded"] }
+        ],
+        "typeProperties": { "waitTimeInSeconds": 1 }
+      }
+    ],
+    "annotations": ["silver", "transform", "scd2", "stored-procedures"],
+    "concurrency": 1
+  }
+}

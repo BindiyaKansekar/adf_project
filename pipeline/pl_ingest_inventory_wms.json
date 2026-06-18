@@ -1,0 +1,85 @@
+{
+  "name": "pl_ingest_inventory_wms",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Full snapshot extraction of inventory levels from the on-premises WMS SQL Server via Self-hosted IR. Runs every 4 hours. Writes Parquet to ADLS Gen2 for efficient Snowflake bulk load.",
+    "activities": [
+      {
+        "name": "GetInventoryRowCount",
+        "description": "Count rows available in WMS before extract — used for reconciliation",
+        "type": "Lookup",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:03:00", "retry": 2, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "source": {
+            "type": "SqlServerSource",
+            "sqlReaderQuery": "SELECT COUNT(*) AS total_rows FROM dbo.INVENTORY_SNAPSHOT WHERE last_updated >= DATEADD(hour, -5, GETUTCDATE())"
+          },
+          "dataset": { "referenceName": "ds_sql_server_inventory", "type": "DatasetReference" },
+          "firstRowOnly": true
+        }
+      },
+      {
+        "name": "CopyInventoryToADLS",
+        "description": "Bulk extract inventory snapshot to Parquet on ADLS Gen2",
+        "type": "Copy",
+        "dependsOn": [
+          { "activity": "GetInventoryRowCount", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.02:00:00", "retry": 3, "retryIntervalInSeconds": 120 },
+        "typeProperties": {
+          "source": {
+            "type": "SqlServerSource",
+            "sqlReaderQuery": "SELECT product_id, location_id, location_type, qty_on_hand, qty_reserved, reorder_point, reorder_qty, snapshot_date, snapshot_ts FROM dbo.INVENTORY_SNAPSHOT",
+            "queryTimeout": "02:00:00",
+            "partitionOption": "None"
+          },
+          "sink": {
+            "type": "ParquetSink",
+            "storeSettings": { "type": "AzureBlobFSWriteSettings" },
+            "formatSettings": { "type": "ParquetWriteSettings" }
+          },
+          "enableStaging": false,
+          "parallelCopies": 4,
+          "dataIntegrationUnits": 8
+        },
+        "inputs": [
+          { "referenceName": "ds_sql_server_inventory", "type": "DatasetReference" }
+        ],
+        "outputs": [
+          { "referenceName": "ds_adls_raw_inventory", "type": "DatasetReference" }
+        ]
+      },
+      {
+        "name": "ReconcileRowCount",
+        "description": "Fail the pipeline if ADLS row count is more than 5% below source count (data loss guard)",
+        "type": "IfCondition",
+        "dependsOn": [
+          { "activity": "CopyInventoryToADLS", "dependencyConditions": ["Succeeded"] }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@less(activity('CopyInventoryToADLS').output.rowsCopied, mul(activity('GetInventoryRowCount').output.firstRow.total_rows, 0.95))",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "FailOnRowCountMismatch",
+              "type": "Fail",
+              "dependsOn": [],
+              "typeProperties": {
+                "message": {
+                  "value": "@concat('Row count mismatch: source=', string(activity('GetInventoryRowCount').output.firstRow.total_rows), ' copied=', string(activity('CopyInventoryToADLS').output.rowsCopied))",
+                  "type": "Expression"
+                },
+                "errorCode": "ROW_COUNT_MISMATCH"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "annotations": ["inventory", "wms", "sql-server", "self-hosted-ir", "parquet"],
+    "concurrency": 1
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "ds_salesforce_contacts",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "description": "Salesforce Contact object — maps to customer records in RETAIL_DW",
+    "linkedServiceName": { "referenceName": "ls_salesforce", "type": "LinkedServiceReference" },
+    "type": "SalesforceObject",
+    "typeProperties": {
+      "objectApiName": "Contact"
+    },
+    "schema": [
+      { "name": "Id",            "type": "String" },
+      { "name": "FirstName",     "type": "String" },
+      { "name": "LastName",      "type": "String" },
+      { "name": "Email",         "type": "String" },
+      { "name": "Phone",         "type": "String" },
+      { "name": "Birthdate",     "type": "Date" },
+      { "name": "CreatedDate",   "type": "DateTime" },
+      { "name": "LastModifiedDate", "type": "DateTime" },
+      { "name": "Customer_Tier__c", "type": "String" },
+      { "name": "IsDeleted",     "type": "Boolean" }
+    ]
+  }
+}

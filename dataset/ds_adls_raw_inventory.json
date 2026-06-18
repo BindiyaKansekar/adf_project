@@ -1,0 +1,24 @@
+{
+  "name": "ds_adls_raw_inventory",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "description": "ADLS Gen2 staging for inventory Parquet snapshots from WMS SQL Server",
+    "linkedServiceName": { "referenceName": "ls_adls_gen2", "type": "LinkedServiceReference" },
+    "type": "Parquet",
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "fileSystem": "retail-raw-stage",
+        "folderPath": {
+          "value": "inventory/@{formatDateTime(pipeline().TriggerTime,'yyyy/MM/dd/HH')}",
+          "type": "Expression"
+        },
+        "fileName": {
+          "value": "snapshot_@{pipeline().RunId}.parquet",
+          "type": "Expression"
+        }
+      },
+      "compressionCodec": "snappy"
+    }
+  }
+}

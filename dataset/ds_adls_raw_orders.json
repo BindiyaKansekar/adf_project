@@ -1,0 +1,24 @@
+{
+  "name": "ds_adls_raw_orders",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "description": "ADLS Gen2 staging area for raw order JSON files from OMS REST API",
+    "linkedServiceName": { "referenceName": "ls_adls_gen2", "type": "LinkedServiceReference" },
+    "type": "Json",
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "fileSystem": "retail-raw-stage",
+        "folderPath": {
+          "value": "orders/@{formatDateTime(pipeline().TriggerTime,'yyyy/MM/dd/HH')}",
+          "type": "Expression"
+        },
+        "fileName": {
+          "value": "@{pipeline().RunId}.json",
+          "type": "Expression"
+        }
+      },
+      "encodingName": "UTF-8"
+    }
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "name": "pl_ingest_orders_api",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Incremental extraction of orders from the OMS REST API. Runs every 15 minutes via tumbling window trigger. Uses pagination (next-link) and persists a timestamp watermark. Writes JSON pages to ADLS Gen2.",
+    "activities": [
+      {
+        "name": "GetOrderWatermark",
+        "description": "Read last successful extraction timestamp from Snowflake watermark table",
+        "type": "Lookup",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:02:00", "retry": 2, "retryIntervalInSeconds": 30 },
+        "typeProperties": {
+          "source": {
+            "type": "SnowflakeSource",
+            "query": "SELECT COALESCE(MAX(LAST_RUN_TS), DATEADD('hour', -1, CURRENT_TIMESTAMP())) AS WATERMARK FROM RETAIL_DW.RAW.PIPELINE_WATERMARKS WHERE PIPELINE_NAME = 'pl_ingest_orders_api'"
+          },
+          "dataset": { "referenceName": "ds_snowflake_raw_orders", "type": "DatasetReference" },
+          "firstRowOnly": true
+        }
+      },
+      {
+        "name": "CopyOrdersToADLS",
+        "description": "Paginated REST copy — fetches all order pages modified since watermark and writes to ADLS staging",
+        "type": "Copy",
+        "dependsOn": [
+          { "activity": "GetOrderWatermark", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.01:00:00", "retry": 3, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "source": {
+            "type": "RestSource",
+            "httpRequestTimeout": "00:03:00",
+            "requestInterval": "00.00:00:00.010",
+            "additionalHeaders": {
+              "X-Modified-Since": {
+                "value": "@activity('GetOrderWatermark').output.firstRow.WATERMARK",
+                "type": "Expression"
+              }
+            },
+            "paginationRules": { "AbsoluteUrl": "$.links.next" }
+          },
+          "sink": {
+            "type": "JsonSink",
+            "storeSettings": { "type": "AzureBlobFSWriteSettings" },
+            "formatSettings": { "type": "JsonWriteSettings", "filePattern": "arrayOfObjects" }
+          },
+          "enableStaging": false
+        },
+        "inputs": [
+          {
+            "referenceName": "ds_rest_orders_api",
+            "type": "DatasetReference",
+            "parameters": {
+              "modifiedSince": {
+                "value": "@activity('GetOrderWatermark').output.firstRow.WATERMARK",
+                "type": "Expression"
+              }
+            }
+          }
+        ],
+        "outputs": [
+          { "referenceName": "ds_adls_raw_orders", "type": "DatasetReference" }
+        ]
+      },
+      {
+        "name": "CheckRowsCopied",
+        "description": "Branch on whether any orders were returned — skip Snowflake load if zero rows",
+        "type": "IfCondition",
+        "dependsOn": [
+          { "activity": "CopyOrdersToADLS", "dependencyConditions": ["Succeeded"] }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@greater(activity('CopyOrdersToADLS').output.rowsCopied, 0)",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "UpdateOrderWatermark",
+              "description": "Update watermark only when rows were actually written",
+              "type": "Script",
+              "dependsOn": [],
+              "policy": { "timeout": "0.00:02:00", "retry": 1 },
+              "typeProperties": {
+                "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+                "scripts": [
+                  {
+                    "type": "NonQuery",
+                    "text": "MERGE INTO RETAIL_DW.RAW.PIPELINE_WATERMARKS t USING (SELECT 'pl_ingest_orders_api' AS PIPELINE_NAME, CURRENT_TIMESTAMP() AS LAST_RUN_TS) s ON t.PIPELINE_NAME = s.PIPELINE_NAME WHEN MATCHED THEN UPDATE SET t.LAST_RUN_TS = s.LAST_RUN_TS WHEN NOT MATCHED THEN INSERT VALUES (s.PIPELINE_NAME, s.LAST_RUN_TS)"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "parameters": {
+      "windowStart": { "type": "String" },
+      "windowEnd":   { "type": "String" }
+    },
+    "annotations": ["orders", "oms", "rest-api", "incremental", "15min"],
+    "concurrency": 1
+  }
+}

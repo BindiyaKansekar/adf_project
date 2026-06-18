@@ -1,0 +1,17 @@
+{
+  "name": "ls_key_vault",
+  "type": "Microsoft.DataFactory/factories/linkedservices",
+  "properties": {
+    "description": "Azure Key Vault — all pipeline secrets are resolved at runtime from this vault",
+    "type": "AzureKeyVault",
+    "typeProperties": {
+      "baseUrl": "@{linkedService().kvBaseUrl}"
+    },
+    "parameters": {
+      "kvBaseUrl": {
+        "type": "String",
+        "defaultValue": "https://kv-retail-prod.vault.azure.net/"
+      }
+    }
+  }
+}

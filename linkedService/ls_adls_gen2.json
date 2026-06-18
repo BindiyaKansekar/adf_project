@@ -1,0 +1,17 @@
+{
+  "name": "ls_adls_gen2",
+  "type": "Microsoft.DataFactory/factories/linkedservices",
+  "properties": {
+    "description": "Azure Data Lake Storage Gen2 — raw ingestion staging area and archive",
+    "type": "AzureBlobFS",
+    "typeProperties": {
+      "url": "https://datalakeretailprod.dfs.core.windows.net",
+      "accountKey": {
+        "type": "AzureKeyVaultSecret",
+        "store": { "referenceName": "ls_key_vault", "type": "LinkedServiceReference" },
+        "secretName": "adls-account-key"
+      }
+    },
+    "annotations": ["ingestion", "staging"]
+  }
+}

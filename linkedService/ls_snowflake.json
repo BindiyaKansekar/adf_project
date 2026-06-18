@@ -1,0 +1,19 @@
+{
+  "name": "ls_snowflake",
+  "type": "Microsoft.DataFactory/factories/linkedservices",
+  "properties": {
+    "description": "Snowflake RETAIL_DW — target data warehouse for all ingestion pipelines",
+    "type": "Snowflake",
+    "typeProperties": {
+      "connectionString": {
+        "type": "AzureKeyVaultSecret",
+        "store": { "referenceName": "ls_key_vault", "type": "LinkedServiceReference" },
+        "secretName": "snowflake-connection-string"
+      },
+      "warehouse": "COMPUTE_WH",
+      "database": "RETAIL_DW",
+      "role": "RAW_LOADER"
+    },
+    "annotations": ["snowflake", "warehouse"]
+  }
+}

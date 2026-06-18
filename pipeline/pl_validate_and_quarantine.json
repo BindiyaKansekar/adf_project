@@ -1,0 +1,182 @@
+{
+  "name": "pl_validate_and_quarantine",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Data quality validation gate. Runs Snowflake DQ checks after raw load. Quarantines files that exceed failure thresholds into a separate ADLS container and posts an alert to the monitoring queue.",
+    "activities": [
+      {
+        "name": "RunDQChecks",
+        "description": "Execute all DQ rules for the given entity. Returns pass/fail counts.",
+        "type": "Script",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:15:00", "retry": 1 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            {
+              "type": "Query",
+              "text": {
+                "value": "@concat('SELECT CHECK_NAME, IS_PASSED, FAILED_ROWS, TOTAL_ROWS, FAILED_ROWS / NULLIF(TOTAL_ROWS, 0) AS FAILURE_RATE FROM RETAIL_DW.RAW.DQ_RESULTS WHERE BATCH_ID = ''', pipeline().parameters.batchId, ''' AND TABLE_NAME = ''', pipeline().parameters.targetTable, '''')",
+                "type": "Expression"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "EvaluateDQResults",
+        "description": "Loop over DQ results; set hasFailures variable if any check breaches threshold",
+        "type": "ForEach",
+        "dependsOn": [
+          { "activity": "RunDQChecks", "dependencyConditions": ["Succeeded"] }
+        ],
+        "typeProperties": {
+          "isSequential": false,
+          "items": {
+            "value": "@activity('RunDQChecks').output.resultSets[0].rows",
+            "type": "Expression"
+          },
+          "activities": [
+            {
+              "name": "CheckFailureThreshold",
+              "type": "IfCondition",
+              "dependsOn": [],
+              "typeProperties": {
+                "expression": {
+                  "value": "@greater(item().FAILURE_RATE, pipeline().parameters.failureThreshold)",
+                  "type": "Expression"
+                },
+                "ifTrueActivities": [
+                  {
+                    "name": "SetHasFailures",
+                    "type": "SetVariable",
+                    "dependsOn": [],
+                    "typeProperties": {
+                      "variableName": "hasFailures",
+                      "value": "true"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "QuarantineOrProceed",
+        "description": "If DQ failures detected: copy file to quarantine container; otherwise mark batch as validated",
+        "type": "IfCondition",
+        "dependsOn": [
+          { "activity": "EvaluateDQResults", "dependencyConditions": ["Completed"] }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@equals(variables('hasFailures'), 'true')",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "CopyToQuarantine",
+              "description": "Move failed file to dq-quarantine container with original path preserved",
+              "type": "Copy",
+              "dependsOn": [],
+              "policy": { "timeout": "0.00:10:00", "retry": 2 },
+              "typeProperties": {
+                "source": {
+                  "type": "BinarySource",
+                  "storeSettings": {
+                    "type": "AzureBlobFSReadSettings",
+                    "recursive": false
+                  }
+                },
+                "sink": {
+                  "type": "BinarySink",
+                  "storeSettings": {
+                    "type": "AzureBlobFSWriteSettings"
+                  }
+                },
+                "enableStaging": false
+              },
+              "inputs": [
+                {
+                  "referenceName": "ds_adls_raw_customers",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "folderPath": {
+                      "value": "@pipeline().parameters.folderPath",
+                      "type": "Expression"
+                    }
+                  }
+                }
+              ],
+              "outputs": [
+                {
+                  "referenceName": "ds_adls_raw_customers",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "folderPath": {
+                      "value": "@concat('dq-quarantine/', pipeline().parameters.targetTable, '/', formatDateTime(utcnow(), 'yyyy/MM/dd'))",
+                      "type": "Expression"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "LogQuarantineEvent",
+              "type": "Script",
+              "dependsOn": [
+                { "activity": "CopyToQuarantine", "dependencyConditions": ["Succeeded"] }
+              ],
+              "policy": { "timeout": "0.00:02:00", "retry": 1 },
+              "typeProperties": {
+                "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+                "scripts": [
+                  {
+                    "type": "NonQuery",
+                    "text": {
+                      "value": "@concat('INSERT INTO RETAIL_DW.RAW.QUARANTINE_LOG (BATCH_ID, TABLE_NAME, FOLDER_PATH, FILE_NAME, QUARANTINE_REASON, QUARANTINE_TS) VALUES (''', pipeline().parameters.batchId, ''', ''', pipeline().parameters.targetTable, ''', ''', pipeline().parameters.folderPath, ''', ''', pipeline().parameters.fileName, ''', ''DQ_THRESHOLD_BREACH'', CURRENT_TIMESTAMP())')",
+                      "type": "Expression"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "ifFalseActivities": [
+            {
+              "name": "MarkBatchValidated",
+              "type": "Script",
+              "dependsOn": [],
+              "policy": { "timeout": "0.00:02:00", "retry": 1 },
+              "typeProperties": {
+                "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+                "scripts": [
+                  {
+                    "type": "NonQuery",
+                    "text": {
+                      "value": "@concat('UPDATE RETAIL_DW.RAW.LOAD_LOG SET DQ_STATUS = ''PASSED'', DQ_VALIDATED_TS = CURRENT_TIMESTAMP() WHERE BATCH_ID = ''', pipeline().parameters.batchId, '''')",
+                      "type": "Expression"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "parameters": {
+      "batchId":          { "type": "String" },
+      "targetTable":      { "type": "String" },
+      "folderPath":       { "type": "String" },
+      "fileName":         { "type": "String" },
+      "failureThreshold": { "type": "Float", "defaultValue": 0.05 }
+    },
+    "variables": {
+      "hasFailures": { "type": "String", "defaultValue": "false" }
+    },
+    "annotations": ["dq", "validation", "quarantine"],
+    "concurrency": 10
+  }
+}

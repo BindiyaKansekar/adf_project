@@ -1,0 +1,62 @@
+{
+  "name": "pl_ingest_product_catalog",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Full refresh of the product catalog from the PIM REST API. Runs weekly (Sunday 01:00 UTC) or on-demand. Writes JSON to ADLS Gen2.",
+    "activities": [
+      {
+        "name": "CopyProductCatalog",
+        "description": "Full extract of all active products including categories and supplier references",
+        "type": "Copy",
+        "dependsOn": [],
+        "policy": { "timeout": "0.02:00:00", "retry": 3, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "source": {
+            "type": "RestSource",
+            "httpRequestTimeout": "00:05:00",
+            "paginationRules": { "AbsoluteUrl": "$.links.next" }
+          },
+          "sink": {
+            "type": "JsonSink",
+            "storeSettings": { "type": "AzureBlobFSWriteSettings" },
+            "formatSettings": { "type": "JsonWriteSettings", "filePattern": "arrayOfObjects" }
+          },
+          "enableStaging": false
+        },
+        "inputs": [
+          { "referenceName": "ds_rest_orders_api", "type": "DatasetReference" }
+        ],
+        "outputs": [
+          { "referenceName": "ds_adls_raw_products", "type": "DatasetReference" }
+        ]
+      },
+      {
+        "name": "ValidateCatalogNotEmpty",
+        "description": "Guard: fail if catalog extract returned zero records",
+        "type": "IfCondition",
+        "dependsOn": [
+          { "activity": "CopyProductCatalog", "dependencyConditions": ["Succeeded"] }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@equals(activity('CopyProductCatalog').output.rowsCopied, 0)",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "FailEmptyCatalog",
+              "type": "Fail",
+              "dependsOn": [],
+              "typeProperties": {
+                "message": "Product catalog extract returned zero records — aborting to protect existing data",
+                "errorCode": "EMPTY_CATALOG"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "annotations": ["products", "catalog", "pim", "weekly"],
+    "concurrency": 1
+  }
+}

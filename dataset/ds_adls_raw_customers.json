@@ -1,0 +1,27 @@
+{
+  "name": "ds_adls_raw_customers",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "description": "ADLS Gen2 staging area for raw customer JSON files extracted from Salesforce",
+    "linkedServiceName": { "referenceName": "ls_adls_gen2", "type": "LinkedServiceReference" },
+    "type": "Json",
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "fileSystem": "retail-raw-stage",
+        "folderPath": {
+          "value": "customers/@{formatDateTime(pipeline().TriggerTime,'yyyy/MM/dd')}",
+          "type": "Expression"
+        },
+        "fileName": {
+          "value": "@{pipeline().RunId}.json",
+          "type": "Expression"
+        }
+      },
+      "encodingName": "UTF-8"
+    },
+    "parameters": {
+      "triggerTime": { "type": "String" }
+    }
+  }
+}

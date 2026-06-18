@@ -1,0 +1,230 @@
+{
+  "name": "pl_orchestrate_daily_load",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Master daily orchestration pipeline. Runs all source ingestions in parallel, then triggers RAW-to-Snowflake loads, DQ validation, Silver transforms, and finally archives processed files. Triggered at 02:00 UTC by tr_daily_load.",
+    "activities": [
+      {
+        "name": "GenerateBatchId",
+        "description": "Create a unique batch ID for this run to correlate all downstream activities",
+        "type": "SetVariable",
+        "dependsOn": [],
+        "typeProperties": {
+          "variableName": "batchId",
+          "value": {
+            "value": "@concat('DAILY_', formatDateTime(utcnow(), 'yyyyMMdd_HHmmss'), '_', pipeline().RunId)",
+            "type": "Expression"
+          }
+        }
+      },
+      {
+        "name": "IngestCRMCustomers",
+        "description": "Parallel fan-out: CRM customer extract from Salesforce",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "GenerateBatchId", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_ingest_crm_customers", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": { "forceFullLoad": false }
+        }
+      },
+      {
+        "name": "IngestInventoryWMS",
+        "description": "Parallel fan-out: inventory snapshot from on-premises WMS",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "GenerateBatchId", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_ingest_inventory_wms", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": {}
+        }
+      },
+      {
+        "name": "IngestCampaigns",
+        "description": "Parallel fan-out: Marketo campaign data",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "GenerateBatchId", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_ingest_campaign_marketo", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": {}
+        }
+      },
+      {
+        "name": "LoadCustomersToRaw",
+        "description": "Load ADLS-staged customers JSON into Snowflake RAW",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "IngestCRMCustomers", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_load_raw_to_snowflake", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": {
+            "targetTable": "CUSTOMERS",
+            "folderPath": {
+              "value": "@concat('retail-raw-stage/customers/', formatDateTime(utcnow(), 'yyyy/MM/dd'))",
+              "type": "Expression"
+            },
+            "fileName": "*.json",
+            "batchId": { "value": "@variables('batchId')", "type": "Expression" },
+            "fileFormat": "JSON"
+          }
+        }
+      },
+      {
+        "name": "LoadInventoryToRaw",
+        "description": "Load ADLS-staged inventory Parquet into Snowflake RAW",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "IngestInventoryWMS", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_load_raw_to_snowflake", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": {
+            "targetTable": "INVENTORY_TRANSACTIONS",
+            "folderPath": {
+              "value": "@concat('retail-raw-stage/inventory/', formatDateTime(utcnow(), 'yyyy/MM/dd'))",
+              "type": "Expression"
+            },
+            "fileName": "*.parquet",
+            "batchId": { "value": "@variables('batchId')", "type": "Expression" },
+            "fileFormat": "PARQUET"
+          }
+        }
+      },
+      {
+        "name": "ValidateCustomersBatch",
+        "description": "DQ gate for customers raw load",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "LoadCustomersToRaw", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_validate_and_quarantine", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": {
+            "batchId":          { "value": "@variables('batchId')", "type": "Expression" },
+            "targetTable":      "CUSTOMERS",
+            "folderPath":       { "value": "@concat('retail-raw-stage/customers/', formatDateTime(utcnow(), 'yyyy/MM/dd'))", "type": "Expression" },
+            "fileName":         "*.json",
+            "failureThreshold": 0.05
+          }
+        }
+      },
+      {
+        "name": "ValidateInventoryBatch",
+        "description": "DQ gate for inventory raw load",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "LoadInventoryToRaw", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_validate_and_quarantine", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": {
+            "batchId":          { "value": "@variables('batchId')", "type": "Expression" },
+            "targetTable":      "INVENTORY_TRANSACTIONS",
+            "folderPath":       { "value": "@concat('retail-raw-stage/inventory/', formatDateTime(utcnow(), 'yyyy/MM/dd'))", "type": "Expression" },
+            "fileName":         "*.parquet",
+            "failureThreshold": 0.02
+          }
+        }
+      },
+      {
+        "name": "RunSilverTransforms",
+        "description": "Trigger all Silver layer stored procedures once all RAW loads and DQ checks pass",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "ValidateCustomersBatch",  "dependencyConditions": ["Succeeded"] },
+          { "activity": "ValidateInventoryBatch",  "dependencyConditions": ["Succeeded"] },
+          { "activity": "IngestCampaigns",         "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_load_silver_layer", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": {}
+        }
+      },
+      {
+        "name": "ArchiveCustomerFiles",
+        "description": "Archive processed customer staging files after successful Silver load",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "RunSilverTransforms", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_archive_processed_files", "type": "PipelineReference" },
+          "waitOnCompletion": false,
+          "parameters": {
+            "sourceFolderPath": { "value": "@concat('retail-raw-stage/customers/', formatDateTime(utcnow(), 'yyyy/MM/dd'))", "type": "Expression" },
+            "fileName":         "*.json",
+            "entityName":       "customers",
+            "batchId":          { "value": "@variables('batchId')", "type": "Expression" }
+          }
+        }
+      },
+      {
+        "name": "ArchiveInventoryFiles",
+        "description": "Archive processed inventory staging files after successful Silver load",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "RunSilverTransforms", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_archive_processed_files", "type": "PipelineReference" },
+          "waitOnCompletion": false,
+          "parameters": {
+            "sourceFolderPath": { "value": "@concat('retail-raw-stage/inventory/', formatDateTime(utcnow(), 'yyyy/MM/dd'))", "type": "Expression" },
+            "fileName":         "*.parquet",
+            "entityName":       "inventory",
+            "batchId":          { "value": "@variables('batchId')", "type": "Expression" }
+          }
+        }
+      },
+      {
+        "name": "NotifyOnFailure",
+        "description": "On any upstream failure: post alert to monitoring Service Bus queue",
+        "type": "WebActivity",
+        "dependsOn": [
+          { "activity": "RunSilverTransforms", "dependencyConditions": ["Failed", "Skipped"] }
+        ],
+        "policy": { "timeout": "0.00:01:00", "retry": 2 },
+        "typeProperties": {
+          "url": {
+            "value": "@concat('https://', pipeline().globalParameters.functionAppHostname, '/api/pipeline-alert')",
+            "type": "Expression"
+          },
+          "method": "POST",
+          "headers": { "Content-Type": "application/json" },
+          "body": {
+            "value": "@json(concat('{\"pipeline\":\"pl_orchestrate_daily_load\",\"runId\":\"', pipeline().RunId, '\",\"batchId\":\"', variables('batchId'), '\",\"status\":\"FAILED\",\"timestamp\":\"', utcnow(), '\"}'  ))",
+            "type": "Expression"
+          }
+        }
+      }
+    ],
+    "variables": {
+      "batchId": { "type": "String", "defaultValue": "" }
+    },
+    "annotations": ["orchestration", "daily", "master-pipeline"],
+    "concurrency": 1
+  }
+}

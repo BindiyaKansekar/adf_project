@@ -1,0 +1,114 @@
+{
+  "name": "pl_load_raw_to_snowflake",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Parameterized pipeline that bulk-loads a single ADLS Gen2 staged file (JSON or Parquet) into the appropriate Snowflake RAW table. Called by the orchestration pipeline with entity-specific parameters.",
+    "activities": [
+      {
+        "name": "LoadToSnowflake",
+        "description": "Copy staged file from ADLS to Snowflake RAW using COPY INTO semantics via the Snowflake connector",
+        "type": "Copy",
+        "dependsOn": [],
+        "policy": { "timeout": "0.01:00:00", "retry": 3, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "source": {
+            "type": "JsonSource",
+            "storeSettings": {
+              "type": "AzureBlobFSReadSettings",
+              "recursive": false,
+              "wildcardFileName": {
+                "value": "@pipeline().parameters.fileName",
+                "type": "Expression"
+              }
+            },
+            "formatSettings": { "type": "JsonReadSettings" }
+          },
+          "sink": {
+            "type": "SnowflakeSink",
+            "preCopyScript": {
+              "value": "@concat('DELETE FROM RETAIL_DW.RAW.', pipeline().parameters.targetTable, ' WHERE BATCH_ID = ''', pipeline().parameters.batchId, '''')",
+              "type": "Expression"
+            },
+            "importSettings": {
+              "type": "SnowflakeImportCopyCommand",
+              "additionalCopyOptions": {
+                "PURGE": "FALSE",
+                "ON_ERROR": "ABORT_STATEMENT",
+                "FORCE": "FALSE"
+              }
+            }
+          },
+          "enableStaging": false,
+          "translator": {
+            "type": "TabularTranslator",
+            "mappings": [
+              {
+                "source": { "path": "$" },
+                "sink": { "name": "PAYLOAD", "type": "Object" }
+              },
+              {
+                "source": { "path": "$.id" },
+                "sink": { "name": "SRC_ID" }
+              }
+            ],
+            "collectionReference": ""
+          }
+        },
+        "inputs": [
+          {
+            "referenceName": "ds_adls_raw_customers",
+            "type": "DatasetReference",
+            "parameters": {
+              "folderPath": {
+                "value": "@pipeline().parameters.folderPath",
+                "type": "Expression"
+              }
+            }
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "ds_snowflake_raw_customers",
+            "type": "DatasetReference",
+            "parameters": {
+              "tableName": {
+                "value": "@pipeline().parameters.targetTable",
+                "type": "Expression"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "RecordLoadMetadata",
+        "description": "Persist load metadata: table, batch, row count, file name, timestamp",
+        "type": "Script",
+        "dependsOn": [
+          { "activity": "LoadToSnowflake", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.00:02:00", "retry": 1 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            {
+              "type": "NonQuery",
+              "text": {
+                "value": "@concat('INSERT INTO RETAIL_DW.RAW.LOAD_LOG (PIPELINE_NAME, TARGET_TABLE, BATCH_ID, FILE_NAME, ROWS_LOADED, LOAD_TS) VALUES (''pl_load_raw_to_snowflake'', ''', pipeline().parameters.targetTable, ''', ''', pipeline().parameters.batchId, ''', ''', pipeline().parameters.fileName, ''', ', string(activity('LoadToSnowflake').output.rowsCopied), ', CURRENT_TIMESTAMP())')",
+                "type": "Expression"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "parameters": {
+      "targetTable":  { "type": "String" },
+      "folderPath":   { "type": "String" },
+      "fileName":     { "type": "String" },
+      "batchId":      { "type": "String" },
+      "fileFormat":   { "type": "String", "defaultValue": "JSON" }
+    },
+    "annotations": ["snowflake", "raw-load", "parameterized", "reusable"],
+    "concurrency": 5
+  }
+}

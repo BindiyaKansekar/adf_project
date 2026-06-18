@@ -1,0 +1,21 @@
+{
+  "name": "ls_marketo",
+  "type": "Microsoft.DataFactory/factories/linkedservices",
+  "properties": {
+    "description": "Marketo marketing automation — source for campaign and lead activity data",
+    "type": "Marketo",
+    "typeProperties": {
+      "endpoint": "https://123-ABC-456.mktorest.com/rest",
+      "clientId": "adf-marketo-client",
+      "clientSecret": {
+        "type": "AzureKeyVaultSecret",
+        "store": { "referenceName": "ls_key_vault", "type": "LinkedServiceReference" },
+        "secretName": "marketo-client-secret"
+      },
+      "useEncryptedEndpoints": true,
+      "useHostVerification": true,
+      "usePeerVerification": true
+    },
+    "annotations": ["marketo", "campaigns", "marketing"]
+  }
+}

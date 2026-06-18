@@ -1,0 +1,20 @@
+{
+  "name": "ds_snowflake_raw_customers",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "description": "Snowflake RETAIL_DW.RAW.CUSTOMERS — target for CRM customer records",
+    "linkedServiceName": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+    "type": "SnowflakeTable",
+    "typeProperties": {
+      "schema": "RAW",
+      "table": "CUSTOMERS"
+    },
+    "schema": [
+      { "name": "SRC_CUSTOMER_ID", "type": "VARCHAR" },
+      { "name": "PAYLOAD",         "type": "VARIANT" },
+      { "name": "FILE_NAME",       "type": "VARCHAR" },
+      { "name": "FILE_ROW_NUMBER", "type": "NUMBER" },
+      { "name": "BATCH_ID",        "type": "VARCHAR" }
+    ]
+  }
+}

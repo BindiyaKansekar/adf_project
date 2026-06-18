@@ -1,0 +1,68 @@
+{
+  "name": "pl_ingest_campaign_marketo",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Daily incremental extract of campaign and lead-activity data from Marketo. Retrieves campaigns, email activities, and program memberships updated since last watermark.",
+    "activities": [
+      {
+        "name": "GetMarketoWatermark",
+        "description": "Read last extraction timestamp for Marketo data",
+        "type": "Lookup",
+        "dependsOn": [],
+        "policy": { "timeout": "0.00:02:00", "retry": 2 },
+        "typeProperties": {
+          "source": {
+            "type": "SnowflakeSource",
+            "query": "SELECT COALESCE(MAX(LAST_RUN_TS), DATEADD('day', -1, CURRENT_DATE())) AS WATERMARK FROM RETAIL_DW.RAW.PIPELINE_WATERMARKS WHERE PIPELINE_NAME = 'pl_ingest_campaign_marketo'"
+          },
+          "dataset": { "referenceName": "ds_snowflake_raw_customers", "type": "DatasetReference" },
+          "firstRowOnly": true
+        }
+      },
+      {
+        "name": "CopyCampaignsFromMarketo",
+        "description": "Extract Marketo campaign definitions",
+        "type": "Copy",
+        "dependsOn": [
+          { "activity": "GetMarketoWatermark", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.01:00:00", "retry": 3, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "source": { "type": "MarketoSource" },
+          "sink": {
+            "type": "JsonSink",
+            "storeSettings": { "type": "AzureBlobFSWriteSettings" },
+            "formatSettings": { "type": "JsonWriteSettings", "filePattern": "arrayOfObjects" }
+          },
+          "enableStaging": false
+        },
+        "inputs": [
+          { "referenceName": "ds_salesforce_contacts", "type": "DatasetReference" }
+        ],
+        "outputs": [
+          { "referenceName": "ds_adls_raw_campaigns", "type": "DatasetReference" }
+        ]
+      },
+      {
+        "name": "UpdateMarketoWatermark",
+        "description": "Persist watermark on success",
+        "type": "Script",
+        "dependsOn": [
+          { "activity": "CopyCampaignsFromMarketo", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.00:02:00", "retry": 1 },
+        "typeProperties": {
+          "linkedService": { "referenceName": "ls_snowflake", "type": "LinkedServiceReference" },
+          "scripts": [
+            {
+              "type": "NonQuery",
+              "text": "MERGE INTO RETAIL_DW.RAW.PIPELINE_WATERMARKS t USING (SELECT 'pl_ingest_campaign_marketo' AS PIPELINE_NAME, CURRENT_TIMESTAMP() AS LAST_RUN_TS) s ON t.PIPELINE_NAME = s.PIPELINE_NAME WHEN MATCHED THEN UPDATE SET t.LAST_RUN_TS = s.LAST_RUN_TS WHEN NOT MATCHED THEN INSERT VALUES (s.PIPELINE_NAME, s.LAST_RUN_TS)"
+            }
+          ]
+        }
+      }
+    ],
+    "annotations": ["campaigns", "marketo", "marketing", "incremental"],
+    "concurrency": 1
+  }
+}

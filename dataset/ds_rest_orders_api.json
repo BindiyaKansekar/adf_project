@@ -1,0 +1,23 @@
+{
+  "name": "ds_rest_orders_api",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "description": "OMS REST API — paginated order endpoint filtered by last-modified timestamp",
+    "linkedServiceName": { "referenceName": "ls_rest_orders_api", "type": "LinkedServiceReference" },
+    "type": "RestResource",
+    "typeProperties": {
+      "relativeUrl": "/orders",
+      "requestMethod": "GET",
+      "additionalHeaders": {
+        "Accept": "application/json"
+      },
+      "paginationRules": {
+        "AbsoluteUrl": "$.links.next"
+      }
+    },
+    "parameters": {
+      "modifiedSince": { "type": "String" },
+      "pageSize":      { "type": "String", "defaultValue": "500" }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+# ADF publish artefacts — written to adf_publish branch by CI, not source branch
+adf_publish/
+
+# Local dev overrides
+.env
+local.settings.json
+
+# Editor
+.vscode/
+.idea/

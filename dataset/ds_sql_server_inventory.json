@@ -1,0 +1,25 @@
+{
+  "name": "ds_sql_server_inventory",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "description": "WMS SQL Server — INVENTORY_SNAPSHOT table with current stock levels per SKU per location",
+    "linkedServiceName": { "referenceName": "ls_sql_server_wms", "type": "LinkedServiceReference" },
+    "type": "SqlServerTable",
+    "typeProperties": {
+      "schema": "dbo",
+      "table": "INVENTORY_SNAPSHOT"
+    },
+    "schema": [
+      { "name": "product_id",      "type": "nvarchar", "precision": 50 },
+      { "name": "location_id",     "type": "nvarchar", "precision": 50 },
+      { "name": "location_type",   "type": "nvarchar", "precision": 20 },
+      { "name": "qty_on_hand",     "type": "int" },
+      { "name": "qty_reserved",    "type": "int" },
+      { "name": "reorder_point",   "type": "int" },
+      { "name": "reorder_qty",     "type": "int" },
+      { "name": "snapshot_date",   "type": "date" },
+      { "name": "snapshot_ts",     "type": "datetime2" },
+      { "name": "last_updated",    "type": "datetime2" }
+    ]
+  }
+}

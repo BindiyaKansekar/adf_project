@@ -1,0 +1,38 @@
+{
+  "name": "tr_orders_tumbling_window",
+  "type": "Microsoft.DataFactory/factories/triggers",
+  "properties": {
+    "description": "Tumbling window trigger for the orders REST API ingestion pipeline. Fires every 15 minutes and passes the window start/end times as parameters so the pipeline can request exactly the orders modified within that window. Windows execute sequentially with no overlap; ADF automatically backfills missed windows on restart.",
+    "type": "TumblingWindowTrigger",
+    "typeProperties": {
+      "frequency": "Minute",
+      "interval": 15,
+      "startTime": "2024-01-01T00:00:00Z",
+      "endTime": null,
+      "delay": "00:02:00",
+      "maxConcurrency": 1,
+      "retryPolicy": {
+        "count": 3,
+        "intervalInSeconds": 60
+      },
+      "dependsOn": []
+    },
+    "pipeline": {
+      "pipelineReference": {
+        "referenceName": "pl_ingest_orders_api",
+        "type": "PipelineReference"
+      },
+      "parameters": {
+        "windowStart": {
+          "value": "@trigger().outputs.windowStartTime",
+          "type": "Expression"
+        },
+        "windowEnd": {
+          "value": "@trigger().outputs.windowEndTime",
+          "type": "Expression"
+        }
+      }
+    },
+    "annotations": ["orders", "15-min", "tumbling-window", "incremental"]
+  }
+}

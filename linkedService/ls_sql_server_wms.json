@@ -1,0 +1,20 @@
+{
+  "name": "ls_sql_server_wms",
+  "type": "Microsoft.DataFactory/factories/linkedservices",
+  "properties": {
+    "description": "SQL Server — on-premises Warehouse Management System (WMS) via Self-hosted IR",
+    "type": "SqlServer",
+    "typeProperties": {
+      "connectionString": {
+        "type": "AzureKeyVaultSecret",
+        "store": { "referenceName": "ls_key_vault", "type": "LinkedServiceReference" },
+        "secretName": "wms-sql-connection-string"
+      }
+    },
+    "connectVia": {
+      "referenceName": "ir_self_hosted_wms",
+      "type": "IntegrationRuntimeReference"
+    },
+    "annotations": ["wms", "on-premises", "inventory"]
+  }
+}
