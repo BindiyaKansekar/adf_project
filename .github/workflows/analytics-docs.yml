@@ -64,25 +64,45 @@ jobs:
         run: |
           PR="${{ steps.pr.outputs.number }}"
           SCOPE="${{ github.event.inputs.scope }}"
+          REPO="${{ github.repository }}"
 
           if [ "$SCOPE" = "Full repository" ]; then
-            analytics-doc scan-dir \
-              --path "$GITHUB_WORKSPACE" \
+            DOC_CMD="analytics-doc scan-dir \
+              --path \"$GITHUB_WORKSPACE\" \
               --type adf \
-              --output "pr-${PR}-docs.md" \
-              --also-html "pr-${PR}-docs.html" \
-              --also-docx "pr-${PR}-docs.docx" \
-              --title "Full Repository - Azure Data Factory (PR #${PR})"
+              --output \"pr-${PR}-docs.md\" \
+              --also-html \"pr-${PR}-docs.html\" \
+              --also-docx \"pr-${PR}-docs.docx\" \
+              --title \"Full Repository - Azure Data Factory (PR #${PR})\""
           else
-            analytics-doc scan-pr \
+            DOC_CMD="analytics-doc scan-pr \
               --provider github \
-              --repo "${{ github.repository }}" \
-              --pr "${PR}" \
+              --repo \"${REPO}\" \
+              --pr \"${PR}\" \
               --type adf \
-              --output "pr-${PR}-docs.md" \
-              --also-html "pr-${PR}-docs.html" \
-              --also-docx "pr-${PR}-docs.docx"
+              --output \"pr-${PR}-docs.md\" \
+              --also-html \"pr-${PR}-docs.html\" \
+              --also-docx \"pr-${PR}-docs.docx\""
           fi
+
+          claude --print \
+            --allowedTools "Bash" \
+            --model claude-sonnet-4-6 \
+            "You are a documentation agent running in CI for an Azure Data Factory repository.
+
+          Your task: generate documentation for PR #${PR}, including the end-to-end data lineage diagram.
+
+          Step 1 — Run the doc engine:
+          ${DOC_CMD}
+
+          Step 2 — Verify all three output files were created:
+            pr-${PR}-docs.md
+            pr-${PR}-docs.html
+            pr-${PR}-docs.docx
+
+          If any output file is missing, report which file failed and what error the command produced.
+          If all files are present, confirm success.
+          Do not modify the generated files."
 
       - name: Upload docs artifact
         id: upload
