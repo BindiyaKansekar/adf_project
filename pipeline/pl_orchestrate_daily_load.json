@@ -60,6 +60,20 @@
         }
       },
       {
+        "name": "IngestOrdersAPI",
+        "description": "Parallel fan-out: REST orders from e-commerce API",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "GenerateBatchId", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_ingest_orders_api", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": {}
+        }
+      },
+      {
         "name": "LoadCustomersToRaw",
         "description": "Load ADLS-staged customers JSON into Snowflake RAW",
         "type": "ExecutePipeline",
@@ -146,12 +160,56 @@
         }
       },
       {
+        "name": "LoadOrdersToRaw",
+        "description": "Load ADLS-staged orders JSON into Snowflake RAW",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "IngestOrdersAPI", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_load_raw_to_snowflake", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": {
+            "targetTable": "ORDERS",
+            "folderPath": {
+              "value": "@concat('retail-raw-stage/orders/', formatDateTime(utcnow(), 'yyyy/MM/dd'))",
+              "type": "Expression"
+            },
+            "fileName": "*.json",
+            "batchId": { "value": "@variables('batchId')", "type": "Expression" },
+            "fileFormat": "JSON"
+          }
+        }
+      },
+      {
+        "name": "ValidateOrdersBatch",
+        "description": "DQ gate for orders raw load",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "LoadOrdersToRaw", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_validate_and_quarantine", "type": "PipelineReference" },
+          "waitOnCompletion": true,
+          "parameters": {
+            "batchId":          { "value": "@variables('batchId')", "type": "Expression" },
+            "targetTable":      "ORDERS",
+            "folderPath":       { "value": "@concat('retail-raw-stage/orders/', formatDateTime(utcnow(), 'yyyy/MM/dd'))", "type": "Expression" },
+            "fileName":         "*.json",
+            "failureThreshold": 0.02
+          }
+        }
+      },
+      {
         "name": "RunSilverTransforms",
         "description": "Trigger all Silver layer stored procedures once all RAW loads and DQ checks pass",
         "type": "ExecutePipeline",
         "dependsOn": [
           { "activity": "ValidateCustomersBatch",  "dependencyConditions": ["Succeeded"] },
           { "activity": "ValidateInventoryBatch",  "dependencyConditions": ["Succeeded"] },
+          { "activity": "ValidateOrdersBatch",     "dependencyConditions": ["Succeeded"] },
           { "activity": "IngestCampaigns",         "dependencyConditions": ["Succeeded"] }
         ],
         "policy": { "secureInput": false, "secureOutput": false },
@@ -195,6 +253,25 @@
             "sourceFolderPath": { "value": "@concat('retail-raw-stage/inventory/', formatDateTime(utcnow(), 'yyyy/MM/dd'))", "type": "Expression" },
             "fileName":         "*.parquet",
             "entityName":       "inventory",
+            "batchId":          { "value": "@variables('batchId')", "type": "Expression" }
+          }
+        }
+      },
+      {
+        "name": "ArchiveOrderFiles",
+        "description": "Archive processed orders staging files after successful Silver load",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          { "activity": "RunSilverTransforms", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "secureInput": false, "secureOutput": false },
+        "typeProperties": {
+          "pipeline": { "referenceName": "pl_archive_processed_files", "type": "PipelineReference" },
+          "waitOnCompletion": false,
+          "parameters": {
+            "sourceFolderPath": { "value": "@concat('retail-raw-stage/orders/', formatDateTime(utcnow(), 'yyyy/MM/dd'))", "type": "Expression" },
+            "fileName":         "*.json",
+            "entityName":       "orders",
             "batchId":          { "value": "@variables('batchId')", "type": "Expression" }
           }
         }
