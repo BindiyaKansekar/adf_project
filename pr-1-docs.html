@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>feat: wire Orders API ingestion into daily orchestration pipeline</title>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({{startOnLoad:true,theme:"default"}});</script>
+<style>
+/* ── Reset & base ─────────────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font:15px/1.65 "Segoe UI",system-ui,sans-serif;color:#222;background:#f7f8fc}
+a{color:#1F497D}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+header{background:linear-gradient(135deg,#1F497D 0%,#2E74B5 100%);color:#fff;padding:22px 40px 18px}
+header h1{font-size:1.6rem;font-weight:600;margin-bottom:4px}
+.meta{font-size:.82rem;opacity:.72}
+
+/* ── Main content ────────────────────────────────────────────────────────── */
+main{max-width:1140px;margin:0 auto;padding:28px 40px 70px}
+h1,h2,h3{margin-top:1.5em;margin-bottom:.4em}
+h1{font-size:1.35rem;color:#1F497D;border-bottom:2px solid #1F497D;padding-bottom:5px}
+h2{font-size:1.18rem;color:#2E74B5;border-bottom:1px solid #c8d8ef;padding-bottom:4px}
+h3{font-size:1.03rem;color:#333}
+p{margin:.45em 0 .8em}
+ul,ol{margin:.35em 0 .8em 1.5em}
+li{margin:.12em 0}
+code{font:13px "Cascadia Code","Consolas",monospace;background:#eef2ff;padding:1px 5px;border-radius:3px}
+pre{background:#f4f4f4;border:1px solid #ddd;border-radius:5px;padding:14px;overflow-x:auto;margin:.7em 0}
+pre code{background:none;padding:0}
+hr{border:none;border-top:1px solid #ddd;margin:1.4em 0}
+strong{font-weight:600}
+em{font-style:italic}
+table{border-collapse:collapse;width:100%;margin:.7em 0 1.1em;font-size:.9rem}
+th{background:#1F497D;color:#fff;padding:7px 12px;text-align:left;font-weight:600}
+td{padding:6px 12px;border-bottom:1px solid #e2e2e2}
+tr:nth-child(even) td{background:#f5f7ff}
+.mermaid{margin:1em 0;text-align:center}
+
+/* ── Lineage section ─────────────────────────────────────────────────────── */
+#lineage-section{margin-top:2.4em;transition:all .25s}
+
+/* toolbar */
+.net-toolbar{
+  display:flex;align-items:center;gap:8px;
+  margin:12px 0 8px;flex-wrap:wrap
+}
+.net-search{
+  display:flex;align-items:center;flex:1;min-width:240px;
+  border:1px solid #bbb;border-radius:7px;background:#fff;
+  overflow:hidden;
+}
+.net-search:focus-within{border-color:#2E74B5;box-shadow:0 0 0 2px #c5d9f1}
+#node-filter{
+  flex:1;padding:8px 10px;border:none;outline:none;
+  font-size:.95rem;background:transparent
+}
+#btn-clear{
+  border:none;background:none;cursor:pointer;padding:6px 10px;
+  font-size:1rem;color:#aaa;line-height:1
+}
+#btn-clear:hover{color:#555}
+.btn-action{
+  padding:7px 14px;border:1px solid #bbb;background:#fff;
+  border-radius:7px;cursor:pointer;font-size:.88rem;
+  white-space:nowrap;transition:background .15s
+}
+.btn-action:hover{background:#f0f4ff;border-color:#2E74B5;color:#2E74B5}
+.net-stats{font-size:.82rem;color:#888;margin-left:auto;white-space:nowrap}
+
+/* legend */
+.net-legend{
+  display:flex;gap:10px;font-size:.8rem;
+  margin-bottom:8px;flex-wrap:wrap;align-items:center
+}
+.net-legend span{padding:3px 9px;border-radius:10px;font-weight:500}
+.leg-raw    {background:#b3c6e7;border:1px solid #4472c4}
+.leg-stage  {background:#d9d9d9;border:1px solid #7f7f7f}
+.leg-silver {background:#d9d9d9;border:1px solid #7f7f7f}
+.leg-mart   {background:#ffe699;border:1px solid #c6a000}
+.leg-gold   {background:#ffe699;border:1px solid #c6a000}
+.leg-unknown{background:#f0f0f0;border:1px solid #aaa}
+.leg-sep    {flex:1}
+.leg-hint   {background:none!important;border:none!important;color:#666;padding:0!important;display:flex;align-items:center;gap:4px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%}
+.dot-match{background:#e74c3c}
+.dot-anc  {background:#2980b9}
+.dot-desc {background:#27ae60}
+
+/* network container */
+#net-wrap{position:relative}
+#lineage-network{
+  width:100%;height:68vh;min-height:480px;max-height:780px;
+  border:1px solid #d0d7e3;border-radius:8px;background:#fff;
+  box-shadow:0 2px 8px rgba(0,0,0,.06)
+}
+
+/* loading overlay */
+#net-loading{
+  position:absolute;inset:0;z-index:10;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  background:rgba(255,255,255,.88);border-radius:8px;
+  font-size:.95rem;color:#555;pointer-events:none
+}
+.spinner{
+  width:34px;height:34px;border:3px solid #dce5f0;
+  border-top-color:#2E74B5;border-radius:50%;
+  animation:spin .7s linear infinite
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* toast */
+#filter-toast{
+  position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+  background:rgba(30,40,55,.82);color:#fff;
+  padding:7px 18px;border-radius:20px;font-size:.84rem;
+  white-space:nowrap;pointer-events:none;
+  opacity:0;transition:opacity .25s
+}
+#filter-toast.visible{opacity:1}
+
+/* fullscreen */
+#lineage-section.fullscreen{
+  position:fixed;inset:0;z-index:9999;
+  background:#f7f8fc;padding:16px 20px;overflow-y:auto
+}
+#lineage-section.fullscreen #lineage-network{
+  height:calc(100vh - 155px);max-height:none
+}
+
+/* ── Node summary panel ──────────────────────────── */
+.node-panel{
+  position:absolute;top:12px;right:12px;
+  width:320px;
+  background:#fff;border:1px solid #d0d7e3;border-radius:10px;
+  box-shadow:0 6px 20px rgba(0,0,0,.13);
+  z-index:20;font-size:.855rem;overflow:hidden;
+  transition:opacity .18s,transform .18s
+}
+.node-panel.hidden{opacity:0;pointer-events:none;transform:translateY(-6px)}
+.np-hdr{
+  display:flex;align-items:flex-start;justify-content:space-between;
+  padding:11px 12px 6px;border-bottom:1px solid #eef0f4;
+  background:#f8f9fc
+}
+.np-title-wrap{flex:1;min-width:0}
+.np-name{
+  display:block;font-weight:700;font-size:.95rem;color:#1a2a40;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.np-full{
+  display:block;font-size:.73rem;color:#888;margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.np-close{
+  border:none;background:none;cursor:pointer;color:#aaa;
+  font-size:1rem;padding:0 0 0 8px;line-height:1;flex-shrink:0
+}
+.np-close:hover{color:#555}
+.np-badges{
+  display:flex;gap:6px;padding:7px 12px 6px;flex-wrap:wrap
+}
+.np-badge{
+  padding:2px 8px;border-radius:8px;border:1px solid transparent;
+  font-size:.73rem;font-weight:600;line-height:1.5
+}
+.np-badge-type{
+  background:#eef2ff;border-color:#c5d0f0;color:#3a4fa0
+}
+.np-section{padding:7px 12px 4px;border-top:1px solid #f0f2f6}
+.np-sec-title{
+  font-size:.75rem;font-weight:600;color:#888;text-transform:uppercase;
+  letter-spacing:.04em;margin-bottom:4px;display:flex;align-items:center;gap:6px
+}
+.np-cnt{
+  background:#e8edf5;color:#3a5278;border-radius:8px;
+  padding:1px 6px;font-size:.72rem;font-weight:700
+}
+.np-empty{color:#aaa;font-style:italic;font-size:.8rem;padding:3px 6px}
+/* relationship blocks */
+.np-rel-wrap{max-height:200px;overflow-y:auto;padding:2px 0}
+.rel-block{margin-bottom:6px}
+.rel-block:last-child{margin-bottom:0}
+.rel-peer-btn{
+  background:none;border:none;cursor:pointer;padding:0;
+  font-size:.78rem;font-weight:600;color:#2E74B5;
+  display:inline-block;margin-bottom:3px
+}
+.rel-peer-btn:hover{text-decoration:underline}
+.rel-table{border-spacing:0;width:100%;font-size:.71rem;font-family:"Cascadia Code","Consolas",monospace}
+.rel-table td{padding:1px 3px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100px}
+.rel-src{color:#2E74B5}
+.rel-tbl{color:#9ab8d8;font-size:.68rem}
+.rel-expr{color:#aaa;font-style:italic;font-family:"Segoe UI",sans-serif}
+.rel-arr{color:#ccc;padding:0 3px;font-family:sans-serif}
+.rel-tgt{color:#1a2a40}
+.rel-key{width:28px}
+.rel-more{color:#999;font-size:.68rem;font-family:"Segoe UI",sans-serif;padding-top:2px}
+.rel-no-cols{color:#bbb;font-size:.72rem;font-style:italic;padding:1px 0}
+/* key type badges */
+.key-badge{
+  display:inline-block;font-size:.62rem;font-weight:700;
+  padding:1px 4px;border-radius:3px;letter-spacing:.02em;
+  font-family:"Segoe UI",sans-serif
+}
+.key-pk{background:#fff3cd;border:1px solid #ffc107;color:#7a5200}
+.key-fk{background:#cce5ff;border:1px solid #74b3f5;color:#004085}
+.np-footer{
+  padding:7px 12px 9px;border-top:1px solid #f0f2f6;
+  font-size:.78rem;color:#777;text-align:center;background:#f8f9fc
+}
+
+/* ── Edge column-mapping panel ───────────────────── */
+.edge-panel{
+  position:absolute;top:12px;right:12px;
+  width:320px;
+  background:#fff;border:1px solid #d0d7e3;border-radius:10px;
+  border-top:3px solid #2E74B5;
+  box-shadow:0 6px 20px rgba(0,0,0,.13);
+  z-index:20;font-size:.855rem;overflow:hidden;
+  transition:opacity .18s,transform .18s
+}
+.edge-panel.hidden{opacity:0;pointer-events:none;transform:translateY(-6px)}
+.ep-stats{
+  padding:5px 12px;font-size:.76rem;color:#2E74B5;font-weight:600;
+  background:#f0f5ff;border-bottom:1px solid #dce8f8
+}
+.ep-col-wrap{max-height:300px;overflow-y:auto;padding:8px 12px}
+.ep-col-table{border-spacing:0;width:100%;font-size:.78rem;font-family:"Cascadia Code","Consolas",monospace}
+.ep-col-table td{padding:2px 4px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
+.ep-src{color:#2E74B5}
+.ep-arr{color:#bbb;padding:0 5px;font-family:sans-serif;font-size:.9em}
+.ep-tgt{color:#1a2a40}
+.ep-expr{color:#aaa;font-style:italic;font-family:"Segoe UI",sans-serif}
+</style>
+</head>
+<body>
+<header>
+  <h1>feat: wire Orders API ingestion into daily orchestration pipeline</h1>
+  <p class="meta">Generated by Intelligent Doc Engine &nbsp;&middot;&nbsp; 2026-06-25 06:19 UTC</p>
+</header>
+<main>
+<h1>PR Documentation: feat: wire Orders API ingestion into daily orchestration pipeline</h1>
+<h2>Overview</h2>
+<p>1 pipeline(s) changed.</p>
+<h2>Summary</h2>
+<ul><li>Added IngestOrdersAPI as a parallel fan-out step in pl_orchestrate_daily_load</li><li>Chained LoadOrdersToRaw -&gt; ValidateOrdersBatch (DQ gate, 2% failure threshold)</li><li>Added ValidateOrdersBatch as a required dependency for RunSilverTransforms</li><li>Added ArchiveOrderFiles cleanup step after successful Silver load</li></ul>
+<h2>Why</h2>
+<p>pl_ingest_orders_api existed as a standalone pipeline but was never connected to the master daily orchestration, meaning orders data was never loaded to RAW or validated before Silver transforms ran.</p>
+<h2>Test plan</h2>
+<ul><li>[ ] Trigger Analytics PR Documentation workflow on this PR</li><li>[ ] Verify generated doc shows the new Orders ingestion chain</li></ul>
+<h2>Pipelines</h2>
+<h3><code>pl_orchestrate_daily_load</code></h3>
+<p>Master daily orchestration pipeline. Runs all source ingestions in parallel, then triggers RAW-to-Snowflake loads, DQ validation, Silver transforms, and finally archives processed files. Triggered at 02:00 UTC by tr_daily_load.</p>
+<p><strong>Activities (16):</strong></p>
+<table>
+<tr><th>Activity</th><th>Type</th><th>Depends On</th></tr>
+<tr><td><code>GenerateBatchId</code></td><td>SetVariable</td><td>—</td></tr>
+<tr><td><code>IngestCRMCustomers</code></td><td>ExecutePipeline</td><td><code>GenerateBatchId</code></td></tr>
+<tr><td><code>IngestInventoryWMS</code></td><td>ExecutePipeline</td><td><code>GenerateBatchId</code></td></tr>
+<tr><td><code>IngestCampaigns</code></td><td>ExecutePipeline</td><td><code>GenerateBatchId</code></td></tr>
+<tr><td><code>IngestOrdersAPI</code></td><td>ExecutePipeline</td><td><code>GenerateBatchId</code></td></tr>
+<tr><td><code>LoadCustomersToRaw</code></td><td>ExecutePipeline</td><td><code>IngestCRMCustomers</code></td></tr>
+<tr><td><code>LoadInventoryToRaw</code></td><td>ExecutePipeline</td><td><code>IngestInventoryWMS</code></td></tr>
+<tr><td><code>ValidateCustomersBatch</code></td><td>ExecutePipeline</td><td><code>LoadCustomersToRaw</code></td></tr>
+<tr><td><code>ValidateInventoryBatch</code></td><td>ExecutePipeline</td><td><code>LoadInventoryToRaw</code></td></tr>
+<tr><td><code>LoadOrdersToRaw</code></td><td>ExecutePipeline</td><td><code>IngestOrdersAPI</code></td></tr>
+<tr><td><code>ValidateOrdersBatch</code></td><td>ExecutePipeline</td><td><code>LoadOrdersToRaw</code></td></tr>
+<tr><td><code>RunSilverTransforms</code></td><td>ExecutePipeline</td><td><code>ValidateCustomersBatch</code>, <code>ValidateInventoryBatch</code>, <code>ValidateOrdersBatch</code>, <code>IngestCampaigns</code></td></tr>
+<tr><td><code>ArchiveCustomerFiles</code></td><td>ExecutePipeline</td><td><code>RunSilverTransforms</code></td></tr>
+<tr><td><code>ArchiveInventoryFiles</code></td><td>ExecutePipeline</td><td><code>RunSilverTransforms</code></td></tr>
+<tr><td><code>ArchiveOrderFiles</code></td><td>ExecutePipeline</td><td><code>RunSilverTransforms</code></td></tr>
+<tr><td><code>NotifyOnFailure</code></td><td>WebActivity</td><td><code>RunSilverTransforms</code></td></tr>
+</table>
+<p><strong>Activity Flow:</strong></p>
+<p>[(&#x27;GenerateBatchId&#x27;, &#x27;IngestCRMCustomers&#x27;), (&#x27;GenerateBatchId&#x27;, &#x27;IngestInventoryWMS&#x27;), (&#x27;GenerateBatchId&#x27;, &#x27;IngestCampaigns&#x27;), (&#x27;GenerateBatchId&#x27;, &#x27;IngestOrdersAPI&#x27;), (&#x27;IngestCRMCustomers&#x27;, &#x27;LoadCustomersToRaw&#x27;), (&#x27;IngestInventoryWMS&#x27;, &#x27;LoadInventoryToRaw&#x27;), (&#x27;LoadCustomersToRaw&#x27;, &#x27;ValidateCustomersBatch&#x27;), (&#x27;LoadInventoryToRaw&#x27;, &#x27;ValidateInventoryBatch&#x27;), (&#x27;IngestOrdersAPI&#x27;, &#x27;LoadOrdersToRaw&#x27;), (&#x27;LoadOrdersToRaw&#x27;, &#x27;ValidateOrdersBatch&#x27;), (&#x27;ValidateCustomersBatch&#x27;, &#x27;RunSilverTransforms&#x27;), (&#x27;ValidateInventoryBatch&#x27;, &#x27;RunSilverTransforms&#x27;), (&#x27;ValidateOrdersBatch&#x27;, &#x27;RunSilverTransforms&#x27;), (&#x27;IngestCampaigns&#x27;, &#x27;RunSilverTransforms&#x27;), (&#x27;RunSilverTransforms&#x27;, &#x27;ArchiveCustomerFiles&#x27;), (&#x27;RunSilverTransforms&#x27;, &#x27;ArchiveInventoryFiles&#x27;), (&#x27;RunSilverTransforms&#x27;, &#x27;ArchiveOrderFiles&#x27;), (&#x27;RunSilverTransforms&#x27;, &#x27;NotifyOnFailure&#x27;)]</p>
+<hr>
+<p><em>Generated by Intelligent Doc Engine | Template mode (no AI)</em></p>
+
+</main>
+
+</body>
+</html>
