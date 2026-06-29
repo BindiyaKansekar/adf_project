@@ -64,6 +64,7 @@ jobs:
         run: |
           PR="${{ steps.pr.outputs.number }}"
           SCOPE="${{ github.event.inputs.scope }}"
+          REPO="${{ github.repository }}"
 
           if [ "$SCOPE" = "Full repository" ]; then
             analytics-doc scan-dir \
@@ -76,7 +77,7 @@ jobs:
           else
             analytics-doc scan-pr \
               --provider github \
-              --repo "${{ github.repository }}" \
+              --repo "${REPO}" \
               --pr "${PR}" \
               --type adf \
               --output "pr-${PR}-docs.md" \
